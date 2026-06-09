@@ -1,74 +1,152 @@
 package com.ota.phive;
 
-import com.helger.commons.error.IError;
-import com.helger.commons.error.level.EErrorLevel;
-import com.helger.phive.api.execute.ValidationExecutionManager;
-import com.helger.phive.api.executorset.IValidationExecutorSet;
-import com.helger.phive.api.executorset.IValidationExecutorSetRegistry;
-import com.helger.phive.api.result.ValidationResult;
-import com.helger.phive.api.result.ValidationResultList;
-import com.helger.phive.xml.source.IValidationSourceXML;
-import com.helger.phive.xml.source.ValidationSourceXML;
-import com.ota.config.PhiveEngineConfig;
+import com.helger.io.resource.ClassPathResource;
+import com.helger.schematron.sch.SchematronResourceSCH;
+import com.helger.schematron.svrl.SVRLFailedAssert;
+import com.helger.schematron.svrl.SVRLHelper;
+import com.helger.schematron.svrl.SVRLMarshaller;
+import com.helger.schematron.svrl.jaxb.SchematronOutputType;
+import com.helger.ubl21.UBL21Marshaller;
+import com.helger.diagnostics.error.level.EErrorLevel;
+import com.helger.diagnostics.error.level.IErrorLevel;
 import com.ota.entity.ValidationFindingEntity.FindingSeverity;
 import com.ota.exception.PhiveValidationException;
 import org.springframework.stereotype.Service;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.SAXParseException;
 
+import javax.xml.transform.stream.StreamSource;
+import javax.xml.validation.Schema;
+import javax.xml.validation.Validator;
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class PhiveValidationService {
 
-    private final IValidationExecutorSetRegistry<IValidationSourceXML> vesRegistry;
-
-    public PhiveValidationService(IValidationExecutorSetRegistry<IValidationSourceXML> vesRegistry) {
-        this.vesRegistry = vesRegistry;
+    public PhiveValidationService() {
+        // No-arg constructor
     }
 
-    public PhiveValidationResult validate(byte[] invoiceXmlBytes) {
+    public PhiveValidationResult validate(final byte[] invoiceXmlBytes) {
+        final List<PhiveFinding> findings = new ArrayList<>();
+        String svrlReportXml = "<svrl-placeholder/>";
+
+        // 1. XSD Schema Validation via JAXP & ph-ubl21 Schema
         try {
-            IValidationSourceXML source = ValidationSourceXML.create(invoiceXmlBytes);
-            
-            IValidationExecutorSet<IValidationSourceXML> ves = vesRegistry.getOfID(PhiveEngineConfig.OMAN_TDD_VESID);
-            if (ves == null) {
-                throw new PhiveValidationException("Oman TDD VES not found in registry", null);
-            }
+            final Schema schema = UBL21Marshaller.invoice().getSchema();
+            final Validator validator = schema.newValidator();
 
-            ValidationExecutionManager<IValidationSourceXML> executionManager = ves.createExecutionManager();
-            ValidationResultList resultList = executionManager.executeValidation(source);
-
-            List<PhiveFinding> findings = new ArrayList<>();
-            for (ValidationResult result : resultList) {
-                for (IError error : result.getErrorList()) {
-                    FindingSeverity severity = mapSeverity(error.getErrorLevel());
+            validator.setErrorHandler(new ErrorHandler() {
+                @Override
+                public void warning(final SAXParseException exception) {
                     findings.add(new PhiveFinding(
-                        error.getErrorID(),
-                        error.getErrorText(java.util.Locale.US),
-                        severity,
-                        error.getErrorFieldName()
+                            "XSD-WARNING",
+                            exception.getMessage() + " (Line " + exception.getLineNumber() + ", Column " + exception.getColumnNumber() + ")",
+                            FindingSeverity.WARNING,
+                            null
+                    ));
+                }
+
+                @Override
+                public void error(final SAXParseException exception) {
+                    findings.add(new PhiveFinding(
+                            "XSD-ERROR",
+                            exception.getMessage() + " (Line " + exception.getLineNumber() + ", Column " + exception.getColumnNumber() + ")",
+                            FindingSeverity.ERROR,
+                            null
+                    ));
+                }
+
+                @Override
+                public void fatalError(final SAXParseException exception) {
+                    // Handled via catch block or below
+                }
+            });
+
+            try {
+                validator.validate(new StreamSource(new ByteArrayInputStream(invoiceXmlBytes)));
+            } catch (final SAXParseException e) {
+                final boolean alreadyAdded = findings.stream().anyMatch(f -> f.message().contains("Line " + e.getLineNumber()));
+                if (!alreadyAdded) {
+                    findings.add(new PhiveFinding(
+                            "XSD-FATAL",
+                            e.getMessage() + " (Line " + e.getLineNumber() + ", Column " + e.getColumnNumber() + ")",
+                            FindingSeverity.ERROR,
+                            null
                     ));
                 }
             }
-
-            // In Phive 12.0.3, overallValidity is on ValidationResultList
-            boolean passed = resultList.getOverallValidity().isValid();
-            
-            // To properly serialize SVRL or results, we would use PhiveResult, 
-            // but for simplicity in this demo we'll just format a basic XML or JSON string or leave empty
-            // if SVRL isn't strictly required from phive directly. 
-            // However, ph-schematron natively outputs SVRL. We'll skip raw SVRL for now or just generate a placeholder
-            // since the main requirement is just executing phive and extracting structured errors.
-            String svrlReportXml = "<svrl-placeholder/>"; // Replace with actual SVRL if needed from PhiveJsonHelper
-
-            return new PhiveValidationResult(passed, findings, svrlReportXml);
-
-        } catch (Exception e) {
-            throw new PhiveValidationException("Error during phive validation", e);
+        } catch (final Exception e) {
+            findings.add(new PhiveFinding(
+                    "XSD-SYSTEM-ERROR",
+                    "Could not execute XSD validation: " + e.getMessage(),
+                    FindingSeverity.ERROR,
+                    null
+            ));
         }
+
+        // 2. Schematron Validation via ph-schematron-xslt (only if we did not have system errors or fatal malformed XML)
+        final boolean hasFatalXmlError = findings.stream().anyMatch(f -> "XSD-FATAL".equals(f.ruleId()) || "XSD-SYSTEM-ERROR".equals(f.ruleId()));
+        if (!hasFatalXmlError) {
+            try {
+                final ClassPathResource schResource = new ClassPathResource("validation/oman-tdd-rules.sch");
+                if (!schResource.exists()) {
+                    throw new IllegalStateException("Oman TDD Schematron file not found under classpath:validation/oman-tdd-rules.sch");
+                }
+
+                final SchematronResourceSCH schematron = new SchematronResourceSCH(schResource);
+                if (!schematron.isValidSchematron()) {
+                    findings.add(new PhiveFinding(
+                            "SCH-SYSTEM-ERROR",
+                            "Oman TDD Schematron schema is invalid and cannot be processed.",
+                            FindingSeverity.ERROR,
+                            null
+                    ));
+                } else {
+                    final SchematronOutputType output = schematron.applySchematronValidationToSVRL(
+                            new StreamSource(new ByteArrayInputStream(invoiceXmlBytes))
+                    );
+
+                    if (output != null) {
+                        // Serialize SVRL output to XML string
+                        final SVRLMarshaller marshaller = new SVRLMarshaller();
+                        svrlReportXml = marshaller.getAsString(output);
+
+                        // Extract failed assertions
+                        final List<SVRLFailedAssert> failedAsserts = SVRLHelper.getAllFailedAssertions(output);
+                        for (final SVRLFailedAssert failedAssert : failedAsserts) {
+                            final FindingSeverity severity = mapSeverity(failedAssert.getFlag());
+
+                            findings.add(new PhiveFinding(
+                                    failedAssert.getID(),
+                                    failedAssert.getText(),
+                                    severity,
+                                    failedAssert.getLocation()
+                            ));
+                        }
+                    }
+                }
+            } catch (final Exception e) {
+                findings.add(new PhiveFinding(
+                        "SCH-SYSTEM-ERROR",
+                        "Could not execute Schematron validation: " + e.getMessage(),
+                        FindingSeverity.ERROR,
+                        null
+                ));
+            }
+        }
+
+        final boolean passed = findings.stream().noneMatch(f -> f.severity() == FindingSeverity.ERROR);
+
+        return new PhiveValidationResult(passed, findings, svrlReportXml);
     }
 
-    private FindingSeverity mapSeverity(com.helger.commons.error.level.IErrorLevel errorLevel) {
+    private FindingSeverity mapSeverity(final IErrorLevel errorLevel) {
+        if (errorLevel == null) {
+            return FindingSeverity.ERROR;
+        }
         if (errorLevel.isGE(EErrorLevel.ERROR)) {
             return FindingSeverity.ERROR;
         } else if (errorLevel.isGE(EErrorLevel.WARN)) {

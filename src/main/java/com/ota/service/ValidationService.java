@@ -63,11 +63,11 @@ public class ValidationService {
         tddReceiptRepository.updateStatus(tddReceiptId, ReceiptStatus.VALIDATING);
 
         // 3. Create Validation Run
-        ValidationRunEntity run = ValidationRunEntity.builder()
+        final ValidationRunEntity initialRun = ValidationRunEntity.builder()
             .tddReceiptId(tddReceiptId)
             .validationStatus(ValidationStatus.IN_PROGRESS)
             .build();
-        run = validationRunRepository.save(run);
+        final ValidationRunEntity run = validationRunRepository.save(initialRun);
 
         try {
             // 4. Download XML

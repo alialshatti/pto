@@ -18,9 +18,9 @@
 
     <properties>
         <java.version>21</java.version>
-        <phive.version>12.0.3</phive.version>
-        <ph-commons.version>11.1.6</ph-commons.version>
-        <ph-ubl.version>9.3.2</ph-ubl.version>
+        <ph-commons.version>12.1.5</ph-commons.version>
+        <ph-schematron.version>9.1.1</ph-schematron.version>
+        <ph-ubl.version>10.2.0</ph-ubl.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <oci.sdk.version>3.46.0</oci.sdk.version>
         <aws.sdk.version>2.27.21</aws.sdk.version>
@@ -78,46 +78,23 @@
         </dependency>
 
         <!-- ============================================================ -->
-        <!-- phive Validation Engine -->
+        <!-- UBL & Schematron Validation -->
         <!-- ============================================================ -->
-        <dependency>
-            <groupId>com.helger.phive</groupId>
-            <artifactId>phive-api</artifactId>
-            <version>${phive.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.helger.phive</groupId>
-            <artifactId>phive-xml</artifactId>
-            <version>${phive.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.helger.phive</groupId>
-            <artifactId>phive-result</artifactId>
-            <version>${phive.version}</version>
-        </dependency>
 
-        <!-- ph-commons (transitive but explicit for stability) -->
+        <!-- ph-commons (explicit, compatible with phive 12.0.3) -->
+        <!-- groupId moved to com.helger.commons in 10.x+ -->
         <dependency>
-            <groupId>com.helger</groupId>
+            <groupId>com.helger.commons</groupId>
             <artifactId>ph-commons</artifactId>
-            <version>${ph-commons.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.helger</groupId>
-            <artifactId>ph-xml</artifactId>
             <version>${ph-commons.version}</version>
         </dependency>
 
         <!-- ph-schematron for Schematron + XSLT2 (Saxon) support -->
+        <!-- groupId: com.helger.schematron, compatible with phive 12.0.3 -->
         <dependency>
-            <groupId>com.helger</groupId>
+            <groupId>com.helger.schematron</groupId>
             <artifactId>ph-schematron-xslt</artifactId>
-            <version>8.0.4</version>
-        </dependency>
-        <dependency>
-            <groupId>com.helger</groupId>
-            <artifactId>ph-schematron-pure</artifactId>
-            <version>8.0.4</version>
+            <version>${ph-schematron.version}</version>
         </dependency>
 
         <!-- Saxon HE for XSLT2 queryBinding -->
@@ -128,8 +105,9 @@
         </dependency>
 
         <!-- UBL 2.1 schemas -->
+        <!-- groupId: com.helger.ubl -->
         <dependency>
-            <groupId>com.helger</groupId>
+            <groupId>com.helger.ubl</groupId>
             <artifactId>ph-ubl21</artifactId>
             <version>${ph-ubl.version}</version>
         </dependency>
@@ -232,6 +210,18 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
