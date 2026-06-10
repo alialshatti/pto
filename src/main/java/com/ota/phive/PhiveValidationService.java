@@ -1,12 +1,11 @@
 package com.ota.phive;
 
 import com.helger.io.resource.ClassPathResource;
-import com.helger.schematron.sch.SchematronResourceSCH;
+import com.helger.schematron.xslt.SchematronResourceXSLT;
 import com.helger.schematron.svrl.SVRLFailedAssert;
 import com.helger.schematron.svrl.SVRLHelper;
 import com.helger.schematron.svrl.SVRLMarshaller;
 import com.helger.schematron.svrl.jaxb.SchematronOutputType;
-import com.helger.ubl21.UBL21Marshaller;
 import com.helger.diagnostics.error.level.EErrorLevel;
 import com.helger.diagnostics.error.level.IErrorLevel;
 import com.ota.entity.ValidationFindingEntity.FindingSeverity;
@@ -15,8 +14,10 @@ import org.springframework.stereotype.Service;
 import org.xml.sax.ErrorHandler;
 import org.xml.sax.SAXParseException;
 
+import javax.xml.XMLConstants;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.Schema;
+import javax.xml.validation.SchemaFactory;
 import javax.xml.validation.Validator;
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
@@ -33,9 +34,14 @@ public class PhiveValidationService {
         final List<PhiveFinding> findings = new ArrayList<>();
         String svrlReportXml = "<svrl-placeholder/>";
 
-        // 1. XSD Schema Validation via JAXP & ph-ubl21 Schema
+        // 1. XSD Schema Validation via JAXP & peppol-tdd-1.0.0.xsd
         try {
-            final Schema schema = UBL21Marshaller.invoice().getSchema();
+            final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+            final ClassPathResource xsdResource = new ClassPathResource("validation/peppol-tdd-1.0.0.xsd");
+            if (!xsdResource.exists()) {
+                throw new IllegalStateException("XSD file not found under classpath:validation/peppol-tdd-1.0.0.xsd");
+            }
+            final Schema schema = factory.newSchema(new StreamSource(xsdResource.getInputStream()));
             final Validator validator = schema.newValidator();
 
             validator.setErrorHandler(new ErrorHandler() {
@@ -87,20 +93,20 @@ public class PhiveValidationService {
             ));
         }
 
-        // 2. Schematron Validation via ph-schematron-xslt (only if we did not have system errors or fatal malformed XML)
+        // 2. XSLT Schematron Validation via ph-schematron-xslt (only if we did not have system errors or fatal malformed XML)
         final boolean hasFatalXmlError = findings.stream().anyMatch(f -> "XSD-FATAL".equals(f.ruleId()) || "XSD-SYSTEM-ERROR".equals(f.ruleId()));
         if (!hasFatalXmlError) {
             try {
-                final ClassPathResource schResource = new ClassPathResource("validation/oman-tdd-rules.sch");
-                if (!schResource.exists()) {
-                    throw new IllegalStateException("Oman TDD Schematron file not found under classpath:validation/oman-tdd-rules.sch");
+                final ClassPathResource xsltResource = new ClassPathResource("validation/peppol-om-tdd.xslt");
+                if (!xsltResource.exists()) {
+                    throw new IllegalStateException("Peppol OM TDD XSLT file not found under classpath:validation/peppol-om-tdd.xslt");
                 }
 
-                final SchematronResourceSCH schematron = new SchematronResourceSCH(schResource);
+                final SchematronResourceXSLT schematron = new SchematronResourceXSLT(xsltResource);
                 if (!schematron.isValidSchematron()) {
                     findings.add(new PhiveFinding(
                             "SCH-SYSTEM-ERROR",
-                            "Oman TDD Schematron schema is invalid and cannot be processed.",
+                            "Peppol OM TDD XSLT schema is invalid and cannot be processed.",
                             FindingSeverity.ERROR,
                             null
                     ));
@@ -118,10 +124,18 @@ public class PhiveValidationService {
                         final List<SVRLFailedAssert> failedAsserts = SVRLHelper.getAllFailedAssertions(output);
                         for (final SVRLFailedAssert failedAssert : failedAsserts) {
                             final FindingSeverity severity = mapSeverity(failedAssert.getFlag());
+                            String message = failedAssert.getText();
+                            final String ruleId = failedAssert.getID();
+                            if (message != null && ruleId != null) {
+                                final String prefix = "[" + ruleId + "] ";
+                                if (message.startsWith(prefix)) {
+                                    message = message.substring(prefix.length());
+                                }
+                            }
 
                             findings.add(new PhiveFinding(
-                                    failedAssert.getID(),
-                                    failedAssert.getText(),
+                                    ruleId,
+                                    message,
                                     severity,
                                     failedAssert.getLocation()
                             ));
@@ -131,7 +145,7 @@ public class PhiveValidationService {
             } catch (final Exception e) {
                 findings.add(new PhiveFinding(
                         "SCH-SYSTEM-ERROR",
-                        "Could not execute Schematron validation: " + e.getMessage(),
+                        "Could not execute XSLT Schematron validation: " + e.getMessage(),
                         FindingSeverity.ERROR,
                         null
                 ));

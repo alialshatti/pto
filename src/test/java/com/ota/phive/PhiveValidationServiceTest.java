@@ -18,9 +18,9 @@ class PhiveValidationServiceTest {
     }
 
     @Test
-    void testValidateValidWellFormedButInvalidUbl() {
-        // Valid XML syntax, but not a valid UBL invoice structure/content, so XSD validation will catch errors
-        final PhiveValidationResult result = service.validate("<Invoice xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:Invoice-2\"><cbc:ID xmlns:cbc=\"urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2\">INV-001</cbc:ID></Invoice>".getBytes());
+    void testValidateValidWellFormedButInvalidTaxData() {
+        // Valid XML syntax, but not a valid TaxData structure/content, so XSD validation will catch errors
+        final PhiveValidationResult result = service.validate("<TaxData xmlns=\"urn:peppol:schema:om-taxdata:1.0\"><cbc:CustomizationID xmlns:cbc=\"urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2\">urn:peppol:taxdata:om-1</cbc:CustomizationID></TaxData>".getBytes());
         assertFalse(result.passed());
         assertFalse(result.findings().isEmpty());
         assertTrue(result.findings().stream().anyMatch(f -> "XSD-ERROR".equals(f.ruleId())));
