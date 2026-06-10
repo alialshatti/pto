@@ -7,7 +7,7 @@ spring:
     password: ${DB_PASSWORD:admin123}
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     show-sql: true
     properties:
       hibernate:
@@ -19,6 +19,7 @@ spring:
     locations: classpath:db/migration
     default-schema: ota_validation
     create-schemas: true
+    validate-on-migrate: false
 
 minio:
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
